@@ -1,0 +1,123 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: MLBC - Multipurpose Lambda Batch Container（CloudFormation / AWS::Lambda::Function、永続実行対応）
+
+Parameters:
+  ImageUri:
+    Type: String
+    Description: "ECR のコンテナイメージ URI（例: 123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/mlbc-batch:latest）"
+  EnvMode:
+    Type: String
+    Default: "03_product"
+    AllowedValues:
+      - "01_local"
+      - "02_staging"
+      - "03_product"
+    Description: "デプロイ識別用。関数名は mlbc-batch-${EnvMode}"
+  DurableExecution:
+    Type: String
+    Default: "true"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: "Lambda 永続実行（Durable Execution）を有効にする（作成時のみ指定可能）"
+  DurableExecutionTimeout:
+    Type: Number
+    Default: 3600
+    Description: "永続実行の最大実行時間（秒）。1〜31622400（約1年）"
+  DurableRetentionDays:
+    Type: Number
+    Default: 14
+    Description: "永続実行の履歴保持日数。1〜90"
+
+Conditions:
+  DurableExecutionEnabled: !Equals [ !Ref DurableExecution, "true" ]
+
+Resources:
+  BatchFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "mlbc-batch-role-${EnvMode}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  BatchFunctionRoleS3:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: LambdaS3Access
+      Roles: [ !Ref BatchFunctionRole ]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:ListBucket
+              - s3:DeleteObject
+            Resource:
+              - "arn:aws:s3:::*"
+              - "arn:aws:s3:::*/*"
+
+  BatchFunctionRoleKms:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: LambdaImageDecrypt
+      Roles: [ !Ref BatchFunctionRole ]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - kms:Decrypt
+              - kms:DescribeKey
+            Resource: !Sub "arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/*"
+
+  BatchFunctionRoleSsm:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: LambdaSsmSendCommand
+      Roles: [ !Ref BatchFunctionRole ]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - ssm:SendCommand
+              - ssm:GetCommandInvocation
+              - ssm:ListCommands
+            Resource:
+              - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+              - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:*"
+              - !Sub "arn:aws:ssm:${AWS::Region}::document/AWS-RunShellScript"
+
+  BatchFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "mlbc-batch-${EnvMode}"
+      Description: MLBC バッチ（コンテナ）
+      PackageType: Image
+      Code:
+        ImageUri: !Ref ImageUri
+      Role: !GetAtt BatchFunctionRole.Arn
+      Timeout: 300
+      MemorySize: 512
+      DurableConfig: !If
+        - DurableExecutionEnabled
+        - ExecutionTimeout: !Ref DurableExecutionTimeout
+          RetentionPeriodInDays: !Ref DurableRetentionDays
+        - !Ref "AWS::NoValue"
+
+Outputs:
+  BatchFunctionName:
+    Description: バッチ Lambda 関数名
+    Value: !Ref BatchFunction
+  BatchFunctionArn:
+    Description: バッチ Lambda 関数 ARN
+    Value: !GetAtt BatchFunction.Arn

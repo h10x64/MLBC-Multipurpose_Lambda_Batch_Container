@@ -1,0 +1,2 @@
+# TypeScript用フォルダ
+

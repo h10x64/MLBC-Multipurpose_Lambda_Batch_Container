@@ -1,0 +1,14 @@
+# Git
+.git
+.gitignore
+
+# IDE / OS
+.cursor
+.vscode
+*.swp
+.DS_Store
+Thumbs.db
+
+# 不要なドキュメント等（必要に応じて追加）
+*.md
+!README.md
